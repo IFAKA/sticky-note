@@ -2159,21 +2159,33 @@ function editTabName(noteId, titleSpan) {
   
   const currentTitle = notes[noteId].title || 'Untitled Note';
   
+  // Capture the span's current width before replacing it
+  const spanRect = titleSpan.getBoundingClientRect();
+  const spanWidth = spanRect.width;
+  
   // Create input element
   const input = document.createElement('input');
   input.type = 'text';
   input.value = currentTitle;
+  input.maxLength = 30; // Set max length to 30 characters
   input.style.cssText = `
     background: transparent;
     border: 1px solid #007bff;
     color: inherit;
     font-size: inherit;
     font-family: inherit;
-    padding: 2px 4px;
+    padding: 0;
     margin: 0;
-    width: 100%;
+    width: ${spanWidth}px;
+    min-width: ${spanWidth}px;
+    max-width: 30ch;
+    height: 100%;
     outline: none;
     border-radius: 2px;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   `;
   
   // Replace span with input
@@ -3977,13 +3989,41 @@ function selectSearchResult(match) {
   if (textarea && match.contentMatches.length > 0) {
     textarea.focus();
     
-    // For contentEditable, we'll just focus the element
-    // The search highlighting would need more complex implementation
-    // to work properly with contentEditable divs
-    console.log(`Found match in content, focused editor`);
+    // Get the search query from the search input
+    const searchInput = document.querySelector('#fuzzy-search-input');
+    const searchQuery = searchInput ? searchInput.value.trim() : '';
+    
+    if (searchQuery) {
+      // Find and select the first occurrence of the search term
+      selectTextInTextarea(textarea, searchQuery);
+    }
+    
+    console.log(`Found match in content, focused editor and selected text`);
   }
   
   console.log('Selected search result:', match.title);
+}
+
+// Helper function to select text in textarea
+function selectTextInTextarea(textarea, searchText) {
+  const content = textarea.value || textarea.textContent || '';
+  const searchLower = searchText.toLowerCase();
+  const contentLower = content.toLowerCase();
+  
+  // Find the first occurrence of the search text
+  const index = contentLower.indexOf(searchLower);
+  
+  if (index !== -1) {
+    // Set the selection range
+    textarea.setSelectionRange(index, index + searchText.length);
+    
+    // Scroll the selection into view
+    textarea.scrollTop = textarea.scrollHeight;
+    
+    console.log(`Selected text "${searchText}" at position ${index}-${index + searchText.length}`);
+  } else {
+    console.log(`Search text "${searchText}" not found in content`);
+  }
 }
 
 // Show note preview on hover
