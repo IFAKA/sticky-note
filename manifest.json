@@ -6,7 +6,11 @@
   
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "downloads",
+    "contextMenus",
+    "clipboardRead",
+    "clipboardWrite"
   ],
   
   "host_permissions": [
@@ -20,7 +24,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["import-export-share.js", "content.js"],
       "run_at": "document_end"
     }
   ],

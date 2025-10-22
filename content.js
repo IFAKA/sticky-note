@@ -21,16 +21,11 @@ let searchView = null;
 let searchMatches = [];
 let selectedMatchIndex = 0;
 
-// WPM calculation variables
-let typingStartTime = null;
-let lastTypingTime = null;
-let totalTypingTime = 0;
-let totalWordsTyped = 0;
-let currentWPM = 0;
 
 // Advanced metrics variables
 let sessionStartTime = null;
 let lastSaveTime = null;
+let statusUpdateInterval = null;
 
 // Global drag and drop variables
 let isTabDragging = false;
@@ -39,6 +34,48 @@ let dragOverPosition = null;
 let draggedTab = null;
 let dragTooltip = null;
 let dragImageEl = null;
+
+// Helper function to safely call chrome.storage.sync methods
+function safeStorageCall(method, ...args) {
+  try {
+    // Check if chrome runtime is still valid
+    if (!chrome.runtime || !chrome.runtime.id) {
+      console.log('Chrome runtime context invalid, skipping storage operation');
+      return Promise.resolve();
+    }
+    
+    return chrome.storage.sync[method](...args);
+  } catch (error) {
+    if (error.message.includes('Extension context invalidated') || 
+        error.message.includes('The message port closed') ||
+        error.message.includes('Receiving end does not exist')) {
+      console.log('Extension context invalidated, skipping storage operation');
+      return Promise.resolve();
+    }
+    throw error;
+  }
+}
+
+// Helper function to safely call chrome.runtime.sendMessage
+function safeRuntimeSendMessage(message) {
+  try {
+    // Check if chrome runtime is still valid
+    if (!chrome.runtime || !chrome.runtime.id) {
+      console.log('Chrome runtime context invalid, skipping message send');
+      return;
+    }
+    
+    chrome.runtime.sendMessage(message);
+  } catch (error) {
+    if (error.message.includes('Extension context invalidated') || 
+        error.message.includes('The message port closed') ||
+        error.message.includes('Receiving end does not exist')) {
+      console.log('Extension context invalidated, skipping message send');
+      return;
+    }
+    throw error;
+  }
+}
 
 // Note templates for trading and development
 const NOTE_TEMPLATES = {
@@ -669,15 +706,19 @@ WHERE
 
 // Create the main sticky note application
 function createStickyNoteApp() {
+  console.log('🏗️ createStickyNoteApp() called with:', { isVisible, isFullScreen, isDarkMode });
+  
   // Remove existing app
   const existing = document.getElementById('sticky-note-extension');
   if (existing) {
+    console.log('🗑️ Removing existing app');
     existing.remove();
   }
 
   // Create main container
   const container = document.createElement('div');
   container.id = 'sticky-note-extension';
+  console.log('📦 Creating container with visibility:', isVisible);
   container.style.cssText = isFullScreen ? `
         position: fixed;
     top: 0;
@@ -935,6 +976,7 @@ function createStickyNoteApp() {
 
   // Create content area
   const content = document.createElement('div');
+  content.id = 'content';
   content.style.cssText = `
     flex: 1;
         display: flex;
@@ -957,10 +999,7 @@ function createStickyNoteApp() {
 
   // Remove the old search bar - we'll add a search button instead
 
-  // Formatting buttons
-  const boldBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></svg>', 'Bold', () => formatText('bold'));
-  const italicBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>', 'Italic', () => formatText('italic'));
-  const codeBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg>', 'Code', () => formatText('code'));
+  // No formatting buttons - keeping it simple
   
   // Category selector
   const categoryContainer = document.createElement('div');
@@ -1000,22 +1039,23 @@ function createStickyNoteApp() {
   categoryContainer.appendChild(categoryLabel);
   categoryContainer.appendChild(categorySelect);
 
-  // Export button
-  const exportBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>', 'Export', () => exportNote());
-  
-  // Bulk export button
-  const bulkExportBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27,6.96 12,12.01 20.73,6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>', 'Export All', () => exportAllNotes());
+  // Import button
+  const importBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7,10 12,15 17,10"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>', 'Import', () => openImportMenu(importBtn));
+
+  // Share button
+  const shareBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>', 'Share', () => openShareMenu(shareBtn));
+
+  // Export button (opens format menu)
+  const exportBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>', 'Export', () => openExportMenu(exportBtn));
   
   // Clear button
   const clearBtn = createToolbarButton('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>', 'Clear', () => clearCurrentNote());
 
   toolbar.appendChild(categoryContainer);
-  toolbar.appendChild(boldBtn);
-  toolbar.appendChild(italicBtn);
-  toolbar.appendChild(codeBtn);
-  toolbar.appendChild(document.createElement('div')).style.width = '8px';
+  // No formatting buttons - keeping it simple
+  toolbar.appendChild(importBtn);
+  toolbar.appendChild(shareBtn);
   toolbar.appendChild(exportBtn);
-  toolbar.appendChild(bulkExportBtn);
   toolbar.appendChild(clearBtn);
 
   // Create editor area
@@ -1027,22 +1067,52 @@ function createStickyNoteApp() {
         overflow: hidden;
   `;
 
-  // Create textarea
-  const textarea = document.createElement('textarea');
+  // Create simple textarea with real-time markdown rendering
+  const textarea = document.createElement('div');
   textarea.id = 'note-editor';
-  textarea.placeholder = 'Start typing your note...';
+  textarea.setAttribute('contenteditable', 'true');
+  textarea.setAttribute('spellcheck', 'true');
+  textarea.setAttribute('autocomplete', 'off');
+  textarea.setAttribute('autocorrect', 'off');
+  textarea.setAttribute('autocapitalize', 'off');
+  textarea.setAttribute('data-placeholder', 'Start typing your note... (Supports Markdown and images)');
   textarea.style.cssText = `
-        flex: 1;
-        border: none;
-        outline: none;
+    flex: 1;
+    border: none;
+    outline: none;
     padding: 12px;
-        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-        font-size: 13px;
-    line-height: 1.5;
-        resize: none;
-        background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: none;
+    background: transparent;
     color: #333;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    direction: ltr;
+    unicode-bidi: normal;
+    text-align: left;
+    writing-mode: horizontal-tb;
+    white-space: pre-wrap;
+    word-wrap: break-word;
   `;
+  
+  // Add simple CSS styles for the editor
+  const style = document.createElement('style');
+  style.textContent = `
+    #note-editor {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    /* Dark mode styles */
+    .dark-mode #note-editor {
+      background: #1e1e1e !important;
+      color: #e0e0e0 !important;
+    }
+  `;
+  document.head.appendChild(style);
 
   // Create status bar
   const statusBar = document.createElement('div');
@@ -1070,9 +1140,6 @@ function createStickyNoteApp() {
   cursorInfo.id = 'cursor-info';
   cursorInfo.textContent = 'Ln 1, Col 1';
 
-  const wpmInfo = document.createElement('span');
-  wpmInfo.id = 'wpm-info';
-  wpmInfo.textContent = '0 WPM';
 
   const readingTime = document.createElement('span');
   readingTime.id = 'reading-time';
@@ -1080,7 +1147,7 @@ function createStickyNoteApp() {
 
   const sessionTime = document.createElement('span');
   sessionTime.id = 'session-time';
-  sessionTime.textContent = '0m';
+  sessionTime.textContent = '0s';
 
   const lastModified = document.createElement('span');
   lastModified.id = 'last-modified';
@@ -1088,26 +1155,41 @@ function createStickyNoteApp() {
 
   statusBar.appendChild(wordCount);
   statusBar.appendChild(cursorInfo);
-  statusBar.appendChild(wpmInfo);
   statusBar.appendChild(readingTime);
   statusBar.appendChild(sessionTime);
   statusBar.appendChild(lastModified);
 
   // Assemble components
-  editorArea.appendChild(textarea);
   content.appendChild(toolbar);
-  content.appendChild(editorArea);
+  content.appendChild(textarea);
   content.appendChild(statusBar);
   container.appendChild(header);
   container.appendChild(content);
   document.body.appendChild(container);
+  
+  console.log('✅ Container added to DOM, checking visibility:', {
+    containerExists: !!container,
+    displayStyle: container.style.display,
+    isVisible,
+    computedDisplay: window.getComputedStyle(container).display
+  });
+
+  // Initialize session time when app starts (not when switching notes)
+  console.log('⏰ Initializing session time at app startup...');
+  sessionStartTime = Date.now();
+  lastSaveTime = Date.now();
+  
+  // Start status update timer now that status bar exists
+  startStatusUpdateTimer();
 
   // Add event listeners
   setupEventListeners(container, textarea);
   makeDraggable(container, dragHandle);
+  
+
 
   // Restore saved placement (position and size) if available
-  chrome.storage.sync.get(['notePosition', 'noteSize'], (result) => {
+  safeStorageCall('get', ['notePosition', 'noteSize'], (result) => {
     if (!isFullScreen) {
       const pos = result.notePosition;
       const size = result.noteSize;
@@ -1117,6 +1199,13 @@ function createStickyNoteApp() {
         // Ensure we don't conflict with right positioning
         container.style.right = 'auto';
         container.style.position = 'fixed';
+      } else {
+        // Apply smart positioning to avoid overlapping fixed headers
+        const safePos = computeSafePosition(container);
+        container.style.left = safePos.x + 'px';
+        container.style.top = safePos.y + 'px';
+        container.style.right = 'auto';
+        safeStorageCall('set', { notePosition: safePos });
       }
       if (size && typeof size.width === 'number' && typeof size.height === 'number') {
         container.style.width = size.width + 'px';
@@ -1136,7 +1225,7 @@ function createStickyNoteApp() {
       resizeSaveTimeout = setTimeout(() => {
         const rect = container.getBoundingClientRect();
         const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
-        chrome.storage.sync.set({ noteSize: size });
+        safeStorageCall('set', { noteSize: size });
         // Broadcast real-time update to other tabs
         sendRealtimeUpdate('UI_STATE_CHANGED', { size });
       }, 150);
@@ -1192,6 +1281,487 @@ function createToolbarButton(text, title, onClick) {
   return btn;
 }
 
+// Compute a safe default position avoiding fixed headers/navs
+function computeSafePosition(element) {
+  try {
+    const margin = 10;
+    const viewportWidth = window.innerWidth;
+    const defaultWidth = Math.min(500, Math.floor(viewportWidth * 0.45));
+    const elementWidth = defaultWidth;
+    let topOffset = 100; // base default
+
+    // Find topmost fixed/sticky header-like elements
+    const candidates = Array.from(document.body.querySelectorAll('*')).slice(0, 2000);
+    let maxHeaderBottom = 0;
+    for (const el of candidates) {
+      const style = window.getComputedStyle(el);
+      if ((style.position === 'fixed' || style.position === 'sticky') && style.visibility !== 'hidden' && style.display !== 'none') {
+        const rect = el.getBoundingClientRect();
+        // Consider only elements pinned near the top and spanning width
+        if (rect.top <= 4 && rect.bottom > 0 && rect.width > viewportWidth * 0.5 && rect.height >= 40 && rect.height < window.innerHeight * 0.5) {
+          maxHeaderBottom = Math.max(maxHeaderBottom, rect.bottom);
+        }
+      }
+    }
+
+    topOffset = Math.max(topOffset, Math.round(maxHeaderBottom) + margin);
+    const x = Math.max(margin, viewportWidth - elementWidth - 20);
+    const y = Math.min(Math.max(margin, topOffset), Math.max(0, window.innerHeight - 200));
+    return { x, y };
+  } catch (_) {
+    return { x: 20, y: 100 };
+  }
+}
+
+// ---------- Import / Export / Share ----------
+
+function openExportMenu(button) {
+  const existing = document.querySelector('.export-menu');
+  if (existing) existing.remove();
+  const menu = document.createElement('div');
+  menu.className = 'export-menu';
+  const menuBg = isDarkMode ? '#2d2d2d' : 'white';
+  const menuBorder = isDarkMode ? '#404040' : '#e9ecef';
+  menu.style.cssText = `
+    position: absolute;
+    top: 30px;
+    right: 0;
+    background: ${menuBg};
+    border: 1px solid ${menuBorder};
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    z-index: 1000;
+    min-width: 180px;
+    overflow: hidden;
+  `;
+
+  const addItem = (label, handler) => {
+    const item = document.createElement('div');
+    const itemHover = isDarkMode ? '#404040' : '#f8f9fa';
+    const itemColor = isDarkMode ? '#e0e0e0' : '#333';
+    item.textContent = label;
+    item.style.cssText = `padding: 8px 12px; cursor: pointer; font-size: 12px; color: ${itemColor};`;
+    item.addEventListener('mouseenter', () => { item.style.background = itemHover; });
+    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    item.addEventListener('click', () => { handler(); menu.remove(); });
+    menu.appendChild(item);
+  };
+
+  addItem('Export with format selection', () => showExportFormatDialog(false));
+  addItem('Export All with format selection', () => exportAllNotes());
+
+  button.parentNode.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+}
+
+function openImportMenu(button) {
+  const existing = document.querySelector('.import-menu');
+  if (existing) existing.remove();
+  const menu = document.createElement('div');
+  menu.className = 'import-menu';
+  const menuBg = isDarkMode ? '#2d2d2d' : 'white';
+  const menuBorder = isDarkMode ? '#404040' : '#e9ecef';
+  menu.style.cssText = `
+    position: absolute;
+    top: 30px;
+    right: 0;
+    background: ${menuBg};
+    border: 1px solid ${menuBorder};
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    z-index: 1000;
+    min-width: 200px;
+    overflow: hidden;
+  `;
+
+  const addItem = (label, handler) => {
+    const item = document.createElement('div');
+    const itemHover = isDarkMode ? '#404040' : '#f8f9fa';
+    const itemColor = isDarkMode ? '#e0e0e0' : '#333';
+    item.textContent = label;
+    item.style.cssText = `padding: 8px 12px; cursor: pointer; font-size: 12px; color: ${itemColor};`;
+    item.addEventListener('mouseenter', () => { item.style.background = itemHover; });
+    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    item.addEventListener('click', () => { handler(); menu.remove(); });
+    menu.appendChild(item);
+  };
+
+  addItem('Import JSON file', () => importFromFile(['application/json', '.json']));
+  addItem('Import Markdown/Text file', () => importFromFile(['text/markdown', 'text/plain', '.md', '.txt']));
+  addItem('Paste JSON/Markdown/Text', () => importFromPrompt());
+
+  button.parentNode.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+}
+
+function openShareMenu(button) {
+  const existing = document.querySelector('.share-menu');
+  if (existing) existing.remove();
+  const menu = document.createElement('div');
+  menu.className = 'share-menu';
+  const menuBg = isDarkMode ? '#2d2d2d' : 'white';
+  const menuBorder = isDarkMode ? '#404040' : '#e9ecef';
+  menu.style.cssText = `
+    position: absolute;
+    top: 30px;
+    right: 0;
+    background: ${menuBg};
+    border: 1px solid ${menuBorder};
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    z-index: 1000;
+    min-width: 200px;
+    overflow: hidden;
+  `;
+
+  const addItem = (label, handler) => {
+    const item = document.createElement('div');
+    const itemHover = isDarkMode ? '#404040' : '#f8f9fa';
+    const itemColor = isDarkMode ? '#e0e0e0' : '#333';
+    item.textContent = label;
+    item.style.cssText = `padding: 8px 12px; cursor: pointer; font-size: 12px; color: ${itemColor};`;
+    item.addEventListener('mouseenter', () => { item.style.background = itemHover; });
+    item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    item.addEventListener('click', () => { handler(); menu.remove(); });
+    menu.appendChild(item);
+  };
+
+  addItem('Copy JSON to clipboard', () => shareCopy('json'));
+  addItem('Copy Markdown to clipboard', () => shareCopy('md'));
+  addItem('Copy share link', () => shareLink());
+  addItem('System share (if available)', () => systemShare());
+
+  button.parentNode.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+}
+
+// Unified export format dialog for both single note and bulk export
+function showExportFormatDialog(isBulkExport = false, noteCount = 1) {
+  const existing = document.querySelector('.export-format-dialog');
+  if (existing) existing.remove();
+
+  const dialog = document.createElement('div');
+  dialog.className = 'export-format-dialog';
+  const dialogBg = isDarkMode ? '#2d2d2d' : 'white';
+  const dialogBorder = isDarkMode ? '#404040' : '#e9ecef';
+  dialog.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: ${dialogBg};
+    border: 1px solid ${dialogBorder};
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    z-index: 3000;
+    padding: 20px;
+    min-width: 300px;
+  `;
+
+  const titleEl = document.createElement('h3');
+  const titleColor = isDarkMode ? '#e0e0e0' : '#333';
+  titleEl.style.cssText = `
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    color: ${titleColor};
+  `;
+  titleEl.textContent = isBulkExport ? `Export All Notes (${noteCount})` : 'Export Note';
+
+  const formatLabel = document.createElement('label');
+  const labelColor = isDarkMode ? '#e0e0e0' : '#333';
+  formatLabel.style.cssText = `
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: ${labelColor};
+  `;
+  formatLabel.textContent = 'Export Format:';
+
+  const formatSelect = document.createElement('select');
+  const selectBg = isDarkMode ? '#404040' : '#ffffff';
+  const selectBorder = isDarkMode ? '#555555' : '#e9ecef';
+  const selectColor = isDarkMode ? '#e0e0e0' : '#333';
+  formatSelect.style.cssText = `
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid ${selectBorder};
+    border-radius: 4px;
+    background: ${selectBg};
+    color: ${selectColor};
+    margin-bottom: 16px;
+    font-size: 14px;
+  `;
+
+  const formats = [
+    { value: 'json', text: 'JSON (Full data with metadata)' },
+    { value: 'markdown', text: 'Markdown (.md)' },
+    { value: 'txt', text: 'Plain Text (.txt)' },
+    { value: 'html', text: 'HTML (Formatted output)' }
+  ];
+
+  // Add CSV option only for bulk export
+  if (isBulkExport) {
+    formats.splice(1, 0, { value: 'csv', text: 'CSV (Spreadsheet format)' });
+  }
+
+
+  formats.forEach(format => {
+    const option = document.createElement('option');
+    option.value = format.value;
+    option.textContent = format.text;
+    formatSelect.appendChild(option);
+  });
+
+  const buttonContainer = document.createElement('div');
+  buttonContainer.style.cssText = `
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  `;
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = `
+    padding: 8px 16px;
+    border: 1px solid ${selectBorder};
+    border-radius: 4px;
+    background: transparent;
+    color: ${selectColor};
+    cursor: pointer;
+  `;
+  cancelBtn.addEventListener('click', () => dialog.remove());
+
+  const exportBtn = document.createElement('button');
+  exportBtn.textContent = isBulkExport ? 'Export All' : 'Export';
+  const exportBtnBg = isDarkMode ? '#0066cc' : '#007bff';
+  exportBtn.style.cssText = `
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    background: ${exportBtnBg};
+    color: white;
+    cursor: pointer;
+  `;
+  exportBtn.addEventListener('click', () => {
+    if (isBulkExport) {
+      performBulkExport(formatSelect.value);
+    } else {
+      exportNoteAs(formatSelect.value);
+    }
+    dialog.remove();
+  });
+
+  buttonContainer.appendChild(cancelBtn);
+  buttonContainer.appendChild(exportBtn);
+
+  dialog.appendChild(titleEl);
+  dialog.appendChild(formatLabel);
+  dialog.appendChild(formatSelect);
+  dialog.appendChild(buttonContainer);
+  document.body.appendChild(dialog);
+
+  // Close on overlay click
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) {
+      dialog.remove();
+    }
+  });
+}
+
+function exportNoteAs(format) {
+  if (!currentNoteId || !notes[currentNoteId]) return;
+  const note = notes[currentNoteId];
+  const title = note.title || 'Untitled Note';
+  const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+
+  if (format === 'json') {
+    const data = {
+      title,
+      content: note.content,
+      category: note.category,
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    downloadBlob(`${safeTitle}.json`, blob);
+    return;
+  }
+
+  if (format === 'md' || format === 'txt') {
+    const body = note.content || '';
+    const content = body.startsWith('#') ? body : `# ${title}\n\n${body}`;
+    const mime = format === 'md' ? 'text/markdown' : 'text/plain';
+    const ext = format === 'md' ? 'md' : 'txt';
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    downloadBlob(`${safeTitle}.${ext}`, blob);
+  }
+
+  if (format === 'html') {
+    const body = note.content || '';
+    const content = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${title}</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .note { border: 1px solid #ddd; padding: 20px; border-radius: 4px; }
+        .note-content { white-space: pre-wrap; line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <div class="note">
+        <h1>${title}</h1>
+        <div class="note-content">${body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+    </div>
+</body>
+</html>`;
+    const blob = new Blob([content], { type: 'text/html' });
+    downloadBlob(`${safeTitle}.html`, blob);
+  }
+}
+
+function importFromFile(accept) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  if (Array.isArray(accept)) input.accept = accept.join(',');
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    const text = await file.text();
+    handleImportedText(text, file.type || file.name);
+  });
+  input.click();
+}
+
+function importFromPrompt() {
+  const text = prompt('Paste JSON, Markdown, or Text below:');
+  if (!text) return;
+  handleImportedText(text, 'text/plain');
+}
+
+function handleImportedText(text, hint) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  // Try JSON bulk or single
+  if (hint.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const data = JSON.parse(trimmed);
+      if (Array.isArray(data.notes)) {
+        // bulk import
+        data.notes.forEach(n => createNoteFromImported(n));
+        updateTabs();
+        updateEditor();
+        saveNotes();
+        return;
+      }
+      if (data && (data.content || data.title)) {
+        createNoteFromImported(data);
+        updateTabs();
+        updateEditor();
+        saveNotes();
+        return;
+      }
+    } catch (_) {
+      // fallthrough to markdown/text
+    }
+  }
+
+  // Treat as markdown/text
+  const newId = 'note_' + Date.now();
+  notes[newId] = {
+    id: newId,
+    title: null, // Will default to 'Untitled Note' in display
+    content: trimmed,
+    category: 'Personal',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  undoStacks[newId] = [];
+  redoStacks[newId] = [];
+  currentNoteId = newId;
+  updateTabs();
+  updateEditor();
+  saveNotes();
+}
+
+function createNoteFromImported(obj) {
+  const newId = 'note_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const content = typeof obj.content === 'string' ? obj.content : (typeof obj.title === 'string' ? obj.title + '\n' : '');
+  notes[newId] = {
+    id: newId,
+    title: obj.title || null, // Will default to 'Untitled Note' in display
+    content,
+    category: obj.category || 'Personal',
+    createdAt: obj.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  undoStacks[newId] = [];
+  redoStacks[newId] = [];
+  currentNoteId = newId;
+}
+
+function shareCopy(format) {
+  if (!currentNoteId || !notes[currentNoteId]) return;
+  const note = notes[currentNoteId];
+  const title = note.title || 'Untitled Note';
+  let payload = '';
+  if (format === 'json') {
+    payload = JSON.stringify({ title, content: note.content, category: note.category, updatedAt: note.updatedAt }, null, 2);
+  } else {
+    const body = note.content || '';
+    payload = body.startsWith('#') ? body : `# ${title}\n\n${body}`;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(payload).catch(() => {});
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = payload; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+  }
+}
+
+function shareLink() {
+  if (!currentNoteId || !notes[currentNoteId]) return;
+  const note = notes[currentNoteId];
+  const data = {
+    c: note.content,
+    g: note.category,
+    u: note.updatedAt
+  };
+  const encoded = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(data)))));
+  const url = `data:text/plain;base64,${btoa(unescape(encodeURIComponent(note.content)))}`;
+  // Prefer content data URL for easy preview; also copy compact JSON as fallback next to it
+  const linkText = `${url}\n\nJSON:${encoded}`;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(linkText).catch(() => {});
+  }
+}
+
+function systemShare() {
+  if (!navigator.share || !currentNoteId || !notes[currentNoteId]) return;
+  const note = notes[currentNoteId];
+  const firstLine = note.content.split('\n')[0].trim();
+  const title = (firstLine && firstLine.length > 0) ? firstLine : 'Sticky Note';
+  const text = note.content;
+  navigator.share({ title, text }).catch(() => {});
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // Create new note
 function createNewNote(templateKey = null) {
   const noteId = 'note_' + Date.now();
@@ -1199,6 +1769,7 @@ function createNewNote(templateKey = null) {
   
   notes[noteId] = {
     id: noteId,
+    title: null, // Will default to 'Untitled Note' in display
     content: template ? template.content : '',
     category: 'Personal',
     createdAt: new Date().toISOString(),
@@ -1335,13 +1906,8 @@ function updateTabs() {
       " title="Close tab">×</button>
     ` : '';
     
-    // Get title from first line of content and trim if too long
-    const firstLine = note.content.split('\n')[0].trim();
-    const rawTitle = firstLine || 'Untitled Note';
-    const maxTitleLength = 30; // Industry standard for tab names
-    const displayTitle = rawTitle.length > maxTitleLength 
-      ? rawTitle.substring(0, maxTitleLength) + '...' 
-      : rawTitle;
+    // Use note title or fallback to 'Untitled Note'
+    const displayTitle = note.title || 'Untitled Note';
     
     tab.innerHTML = `
       <span class="note-title" data-note-id="${note.id}" style="
@@ -1350,9 +1916,17 @@ function updateTabs() {
         text-overflow: ellipsis;
         white-space: nowrap;
         min-width: 0;
+        cursor: pointer;
       ">${displayTitle}</span>
       ${closeButtonHtml}
     `;
+    
+    // Add double-click to edit tab name
+    const titleSpan = tab.querySelector('.note-title');
+    titleSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      editTabName(note.id, titleSpan);
+    });
     
     // Add hover preview (only for non-active notes)
     let previewTimeout;
@@ -1579,6 +2153,88 @@ function updateTabs() {
   // Global event handlers are set up in initializeDragAndDrop() function
 }
 
+// Edit tab name functionality
+function editTabName(noteId, titleSpan) {
+  if (!notes[noteId]) return;
+  
+  const currentTitle = notes[noteId].title || 'Untitled Note';
+  
+  // Create input element
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentTitle;
+  input.style.cssText = `
+    background: transparent;
+    border: 1px solid #007bff;
+    color: inherit;
+    font-size: inherit;
+    font-family: inherit;
+    padding: 2px 4px;
+    margin: 0;
+    width: 100%;
+    outline: none;
+    border-radius: 2px;
+  `;
+  
+  // Replace span with input
+  titleSpan.style.display = 'none';
+  titleSpan.parentNode.insertBefore(input, titleSpan);
+  input.focus();
+  input.select();
+  
+  // Flag to track if editing was cancelled
+  let isCancelled = false;
+  
+  // Save function
+  const saveTitle = () => {
+    if (isCancelled) return; // Don't save if cancelled
+    
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== currentTitle) {
+      notes[noteId].title = newTitle;
+      notes[noteId].updatedAt = new Date().toISOString();
+      saveNotes();
+      updateTabs();
+    } else {
+      // Restore original display
+      titleSpan.style.display = 'flex';
+      input.remove();
+    }
+  };
+  
+  // Cancel function
+  const cancelEdit = () => {
+    isCancelled = true;
+    titleSpan.style.display = 'flex';
+    input.remove();
+  };
+  
+  // Event listeners
+  input.addEventListener('blur', () => {
+    // Use setTimeout to ensure the keydown event has been processed first
+    setTimeout(() => {
+      if (!isCancelled) {
+        saveTitle();
+      }
+    }, 0);
+  });
+  
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveTitle();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEdit();
+    }
+  });
+  
+  // Prevent tab switching while editing
+  input.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+}
+
 // Simple tab reordering - move one note to a new position
 function reorderTabs(draggedNoteId, targetNoteId, position = 'before') {
   console.log('reorderTabs called:', { draggedNoteId, targetNoteId, position });
@@ -1677,7 +2333,7 @@ function switchToNote(noteId) {
     // Save current content before switching
     const textarea = document.querySelector('#note-editor');
     if (textarea && currentNoteId && notes[currentNoteId]) {
-      notes[currentNoteId].content = textarea.value;
+      notes[currentNoteId].content = textarea.innerHTML;
       notes[currentNoteId].updatedAt = new Date().toISOString();
       
     }
@@ -1689,8 +2345,8 @@ function switchToNote(noteId) {
     totalWordsTyped = 0;
     currentWPM = 0;
     
-    // Initialize session time
-    sessionStartTime = Date.now();
+    // Update last save time to current time when note is loaded
+    lastSaveTime = Date.now();
     
     currentNoteId = noteId;
     updateTabs();
@@ -1746,20 +2402,19 @@ function updateEditor() {
   const textarea = document.querySelector('#note-editor');
   if (!textarea || !currentNoteId || !notes[currentNoteId]) return;
   
-  // Save current cursor position
-  const currentCursor = textarea.selectionStart;
-  const currentSelectionEnd = textarea.selectionEnd;
-  
   // Set the new content
-  textarea.value = notes[currentNoteId].content;
+  textarea.innerHTML = notes[currentNoteId].content;
   
-  // Restore cursor position if it's within the new content length
-  if (currentCursor <= textarea.value.length) {
-    textarea.setSelectionRange(currentCursor, currentSelectionEnd);
-  } else {
-    // If cursor was beyond content, place it at the end
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }
+  // Ensure cursor is at the end and text direction is correct
+  setTimeout(() => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(textarea);
+    range.collapse(false); // Move to end
+    selection.removeAllRanges();
+    selection.addRange(range);
+    textarea.focus();
+  }, 0);
   
   updateWordCount();
   updateCategorySelector();
@@ -1787,50 +2442,14 @@ function updateCategorySelector() {
   }
 }
 
-// Format text
-function formatText(type) {
-  const textarea = document.querySelector('#note-editor');
-  if (!textarea) return;
-  
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const selectedText = textarea.value.substring(start, end);
-  
-  let formattedText = '';
-  switch (type) {
-    case 'bold':
-      formattedText = `**${selectedText}**`;
-          break;
-    case 'italic':
-      formattedText = `*${selectedText}*`;
-          break;
-    case 'code':
-      formattedText = `\`${selectedText}\``;
-          break;
-      }
-  
-  const newValue = textarea.value.substring(0, start) + formattedText + textarea.value.substring(end);
-  textarea.value = newValue;
-  
-  // Update note content
-  if (currentNoteId && notes[currentNoteId]) {
-    notes[currentNoteId].content = newValue;
-    notes[currentNoteId].updatedAt = new Date().toISOString();
-    saveNotes();
-  }
-  
-  // Restore selection
-  textarea.setSelectionRange(start + 2, end + 2);
-  textarea.focus();
-}
+// Format text function removed - keeping it simple
 
 // Export note
 function exportNote() {
   if (!currentNoteId || !notes[currentNoteId]) return;
   
   const note = notes[currentNoteId];
-  const firstLine = note.content.split('\n')[0].trim();
-  const title = firstLine || 'Untitled Note';
+  const title = note.title || 'Untitled Note';
   
   const data = {
     title: title,
@@ -1853,7 +2472,7 @@ function exportNote() {
   console.log('Exported note:', note.title);
 }
 
-// Export all notes
+// Export all notes with format selection
 function exportAllNotes() {
   const allNotes = Object.values(notes);
   if (allNotes.length === 0) {
@@ -1861,34 +2480,174 @@ function exportAllNotes() {
     return;
   }
   
-  const exportData = {
-    exportDate: new Date().toISOString(),
-    totalNotes: allNotes.length,
-    notes: allNotes.map(note => {
-      const firstLine = note.content.split('\n')[0].trim();
-      const title = firstLine || 'Untitled Note';
-      return {
-        id: note.id,
-        title: title,
-        content: note.content,
-        category: note.category,
-        createdAt: note.createdAt,
-        updatedAt: note.updatedAt
-      };
-    })
-  };
+  // Use the same format dialog as single note export, but for all notes
+  showExportFormatDialog(true, allNotes.length);
+}
+
+// Perform bulk export based on selected format
+function performBulkExport(format) {
+  const allNotes = Object.values(notes);
+  if (allNotes.length === 0) {
+    console.log('No notes to export');
+    return;
+  }
   
-  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  let content, mimeType, extension;
+  
+  switch (format) {
+    case 'json':
+      const exportData = {
+        exportDate: new Date().toISOString(),
+        totalNotes: allNotes.length,
+        notes: allNotes.map(note => {
+  // Handle both HTML content (with <br> tags) and plain text
+  let firstLine;
+  if (note.content.includes('<br>') || note.content.includes('<div>')) {
+    // For HTML content, extract text and get first line
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = note.content;
+    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    firstLine = textContent.split('\n')[0].trim();
+  } else {
+    // For plain text content
+    firstLine = note.content.split('\n')[0].trim();
+  }
+  const title = firstLine || 'Untitled Note';
+          return {
+            id: note.id,
+            title: title,
+            content: note.content,
+            category: note.category,
+            createdAt: note.createdAt,
+            updatedAt: note.updatedAt
+          };
+        })
+      };
+      content = JSON.stringify(exportData, null, 2);
+      mimeType = 'application/json';
+      extension = 'json';
+      break;
+      
+    case 'csv':
+      const headers = ['Title', 'Category', 'Content', 'Created', 'Updated'];
+      const rows = [headers];
+      allNotes.forEach(note => {
+  // Handle both HTML content (with <br> tags) and plain text
+  let firstLine;
+  if (note.content.includes('<br>') || note.content.includes('<div>')) {
+    // For HTML content, extract text and get first line
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = note.content;
+    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    firstLine = textContent.split('\n')[0].trim();
+  } else {
+    // For plain text content
+    firstLine = note.content.split('\n')[0].trim();
+  }
+  const title = firstLine || 'Untitled Note';
+        const content = note.content.replace(/\n/g, ' ').replace(/"/g, '""'); // Escape quotes for CSV
+        rows.push([title, note.category || 'Personal', content, note.createdAt, note.updatedAt]);
+      });
+      content = rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+      mimeType = 'text/csv';
+      extension = 'csv';
+      break;
+      
+    case 'markdown':
+      content = `# Sticky Notes Export\n\n*Exported on ${new Date().toLocaleDateString()}*\n*Total Notes: ${allNotes.length}*\n\n`;
+      allNotes.forEach((note, index) => {
+  // Handle both HTML content (with <br> tags) and plain text
+  let firstLine;
+  if (note.content.includes('<br>') || note.content.includes('<div>')) {
+    // For HTML content, extract text and get first line
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = note.content;
+    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    firstLine = textContent.split('\n')[0].trim();
+  } else {
+    // For plain text content
+    firstLine = note.content.split('\n')[0].trim();
+  }
+  const title = firstLine || 'Untitled Note';
+        content += `## ${index + 1}. ${title}\n\n`;
+        content += `**Category:** ${note.category || 'Personal'}\n\n`;
+        content += `**Created:** ${new Date(note.createdAt).toLocaleDateString()}\n\n`;
+        content += `**Updated:** ${new Date(note.updatedAt).toLocaleDateString()}\n\n`;
+        content += `${note.content}\n\n---\n\n`;
+      });
+      mimeType = 'text/markdown';
+      extension = 'md';
+      break;
+      
+    case 'html':
+      content = `<!DOCTYPE html>
+<html>
+<head>
+    <title>Sticky Notes Export</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .note { border: 1px solid #ddd; margin: 20px 0; padding: 20px; border-radius: 4px; }
+        .note-header { border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
+        .note-title { font-size: 18px; font-weight: bold; margin: 0; }
+        .note-meta { color: #666; font-size: 12px; margin-top: 5px; }
+        .note-content { white-space: pre-wrap; line-height: 1.6; }
+        .export-info { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="export-info">
+        <h1>Sticky Notes Export</h1>
+        <p><strong>Export Date:</strong> ${new Date().toLocaleDateString()}</p>
+        <p><strong>Total Notes:</strong> ${allNotes.length}</p>
+    </div>`;
+      
+      allNotes.forEach((note, index) => {
+  // Handle both HTML content (with <br> tags) and plain text
+  let firstLine;
+  if (note.content.includes('<br>') || note.content.includes('<div>')) {
+    // For HTML content, extract text and get first line
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = note.content;
+    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    firstLine = textContent.split('\n')[0].trim();
+  } else {
+    // For plain text content
+    firstLine = note.content.split('\n')[0].trim();
+  }
+  const title = firstLine || 'Untitled Note';
+        content += `
+    <div class="note">
+        <div class="note-header">
+            <h2 class="note-title">${index + 1}. ${title}</h2>
+            <div class="note-meta">
+                <strong>Category:</strong> ${note.category || 'Personal'} | 
+                <strong>Created:</strong> ${new Date(note.createdAt).toLocaleDateString()} | 
+                <strong>Updated:</strong> ${new Date(note.updatedAt).toLocaleDateString()}
+            </div>
+        </div>
+        <div class="note-content">${note.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+    </div>`;
+      });
+      
+      content += `
+</body>
+</html>`;
+      mimeType = 'text/html';
+      extension = 'html';
+      break;
+  }
+  
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `sticky-notes-export-${new Date().toISOString().split('T')[0]}.json`;
+  a.download = `sticky-notes-export-${new Date().toISOString().split('T')[0]}.${extension}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   
-  console.log(`Exported ${allNotes.length} notes`);
+  console.log(`Exported ${allNotes.length} notes as ${format.toUpperCase()}`);
 }
 
 // Clear current note
@@ -1972,40 +2731,10 @@ function showTemplateMenu(button) {
 // Setup event listeners
 function setupEventListeners(container, textarea) {
   // Real-time save on input
-  textarea.addEventListener('input', () => {
+  textarea.addEventListener('input', (e) => {
+    console.log('Input event triggered:', e.inputType, e.data);
     if (currentNoteId && notes[currentNoteId]) {
-      // Calculate WPM
-      const now = Date.now();
-      if (!typingStartTime) {
-        typingStartTime = now;
-        lastTypingTime = now;
-      }
-      
-      const timeSinceLastTyping = now - lastTypingTime;
-      lastTypingTime = now;
-      
-      // Only count if typing within 2 seconds (not copy/paste)
-      if (timeSinceLastTyping < 2000) {
-        totalTypingTime += timeSinceLastTyping;
-        const currentWords = textarea.value.trim().split(/\s+/).length;
-        if (currentWords > totalWordsTyped) {
-          totalWordsTyped = currentWords;
-        }
-        
-        // Calculate WPM (words per minute) - more accurate calculation
-        if (totalTypingTime > 0) {
-          // Use a rolling average for more stable WPM
-          const instantWPM = (totalWordsTyped / totalTypingTime) * 60000;
-          currentWPM = currentWPM === 0 ? instantWPM : (currentWPM * 0.7) + (instantWPM * 0.3);
-        }
-      } else {
-        // Reset WPM if not typing for too long
-        if (timeSinceLastTyping > 10000) {
-          currentWPM = 0;
-        }
-      }
-      
-      notes[currentNoteId].content = textarea.value;
+      notes[currentNoteId].content = textarea.innerHTML;
       notes[currentNoteId].updatedAt = new Date().toISOString();
       
       updateWordCount();
@@ -2018,12 +2747,13 @@ function setupEventListeners(container, textarea) {
       updateTabs();
       
       // Send real-time update to all tabs immediately
-      sendRealtimeUpdate('CONTENT_CHANGED', {
-        noteId: currentNoteId,
-        content: textarea.value,
-        cursorPosition: textarea.selectionStart,
-        selectionEnd: textarea.selectionEnd
-      });
+      // Temporarily disabled to test backwards text issue
+      // sendRealtimeUpdate('CONTENT_CHANGED', {
+      //   noteId: currentNoteId,
+      //   content: textarea.innerHTML,
+      //   cursorPosition: 0,
+      //   selectionEnd: 0
+      // });
     }
   });
 
@@ -2058,6 +2788,8 @@ function setupEventListeners(container, textarea) {
       createNewNote();
     }
     
+    // No formatting shortcuts - keeping it simple
+    
     // Full-screen (F11)
     if (e.key === 'F11') {
       e.preventDefault();
@@ -2080,47 +2812,95 @@ function setupEventListeners(container, textarea) {
   textarea.addEventListener('selectionchange', () => {
     updateWordCount();
   });
+
+  // Markdown and image functionality
+  // Handle image paste
+  textarea.addEventListener('paste', async (event) => {
+    const handled = await handleImagePaste(event);
+    if (handled) {
+      event.preventDefault();
+    }
+  });
+  
+  // Handle drag and drop for images
+  textarea.addEventListener('dragover', (event) => {
+    event.preventDefault();
+  });
+  
+  textarea.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    const files = event.dataTransfer.files;
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        await insertImageFromFile(file);
+      }
+    }
+  });
+  
+  // No markdown rendering - keeping it simple
 }
 
 // Save notes to storage
 function saveNotes() {
-  chrome.storage.sync.set({ 
+  safeStorageCall('set', { 
     notes: notes,
     currentNoteId: currentNoteId,
-    noteVisible: isVisible,
     isFullScreen: isFullScreen
   });
 }
 
 // Load notes from storage
 function loadNotes() {
-  chrome.storage.sync.get(['notes', 'currentNoteId', 'noteVisible', 'isFullScreen', 'isDarkMode'], (result) => {
+  console.log('🔍 loadNotes() called');
+  safeStorageCall('get', ['notes', 'currentNoteId', 'noteVisible', 'isFullScreen', 'isDarkMode'], (result) => {
+    console.log('📦 Storage result:', result);
+    
     if (result.notes) {
       notes = result.notes;
+      console.log('📝 Loaded notes:', Object.keys(notes).length, 'notes');
     }
     
     if (result.currentNoteId && notes[result.currentNoteId]) {
       currentNoteId = result.currentNoteId;
+      console.log('✅ Found existing currentNoteId:', currentNoteId);
     } else if (Object.keys(notes).length > 0) {
       currentNoteId = Object.keys(notes)[0];
+      console.log('🔄 Using first available note:', currentNoteId);
     } else {
+      console.log('🆕 No existing notes, creating new user setup');
       // Set visibility state first, then create new note
-      isVisible = result.noteVisible === true;
+      isVisible = result.noteVisible !== false; // Default to true unless explicitly set to false
       isFullScreen = result.isFullScreen || false;
       isDarkMode = result.isDarkMode || false;
       
+      console.log('👁️ Visibility settings:', { 
+        noteVisible: result.noteVisible, 
+        isVisible, 
+        isFullScreen, 
+        isDarkMode 
+      });
+      
       // Create the app with correct visibility state
       if (!stickyNoteApp) {
+        console.log('🏗️ Creating sticky note app...');
         stickyNoteApp = createStickyNoteApp();
+        console.log('✅ Sticky note app created:', !!stickyNoteApp);
       }
       
       createNewNote();
       return;
     }
     
-    isVisible = result.noteVisible === true;
+    isVisible = result.noteVisible !== false; // Default to true unless explicitly set to false
     isFullScreen = result.isFullScreen || false;
     isDarkMode = result.isDarkMode || false;
+    
+    console.log('👁️ Final visibility settings:', { 
+      noteVisible: result.noteVisible, 
+      isVisible, 
+      isFullScreen, 
+      isDarkMode 
+    });
     
     // Initialize undo/redo stacks
     Object.keys(notes).forEach(noteId => {
@@ -2130,16 +2910,21 @@ function loadNotes() {
     
     // Create the app only after loading the visibility state
     if (!stickyNoteApp) {
+      console.log('🏗️ Creating sticky note app for existing user...');
       stickyNoteApp = createStickyNoteApp();
+      console.log('✅ Sticky note app created:', !!stickyNoteApp);
     }
     
+    console.log('🔄 Updating tabs and editor...');
     updateTabs();
     updateEditor();
     
     if (isFullScreen) {
+      console.log('🖥️ Applying fullscreen mode...');
       // Ensure fullscreen applied immediately after app creation
       applyFullScreen();
     } else {
+      console.log('📱 Normal mode - setting up drag handle...');
       // Ensure drag handle cursor is set correctly even when not in full screen
       const container = document.getElementById('sticky-note-extension');
       if (container) {
@@ -2151,11 +2936,97 @@ function loadNotes() {
     }
     
     if (isDarkMode) {
+      console.log('🌙 Applying dark mode...');
       applyDarkMode();
     }
     
-    console.log('Loaded notes:', Object.keys(notes).length);
+    console.log('✅ Loaded notes:', Object.keys(notes).length);
+    console.log('🎯 Final app state:', { 
+      isVisible, 
+      isFullScreen, 
+      isDarkMode, 
+      currentNoteId,
+      appExists: !!stickyNoteApp,
+      containerExists: !!document.getElementById('sticky-note-extension')
+    });
   });
+}
+
+// Start status update timer to update session time and last modified every second
+function startStatusUpdateTimer() {
+  // Clear any existing timer
+  if (statusUpdateInterval) {
+    clearInterval(statusUpdateInterval);
+  }
+  
+  // Start new timer that updates every second
+  statusUpdateInterval = setInterval(() => {
+    updateSessionAndLastModified();
+  }, 1000);
+}
+
+// Helper function to format time with step-based intervals
+function formatTimeWithSteps(totalSeconds) {
+  if (totalSeconds <= 5) {
+    // Show 1s, 2s, 3s, 4s, 5s
+    return `${totalSeconds}s`;
+  } else if (totalSeconds <= 10) {
+    // Show 5s until 10s
+    return '5s';
+  } else if (totalSeconds <= 30) {
+    // Show 10s until 30s
+    return '10s';
+  } else if (totalSeconds < 60) {
+    // Show 30s until 1 minute
+    return '30s';
+  } else {
+    // Show minutes after 1 minute
+    const minutes = Math.floor(totalSeconds / 60);
+    return `${minutes}m`;
+  }
+}
+
+// Helper function to format time ago with step-based intervals
+function formatTimeAgoWithSteps(totalSeconds) {
+  if (totalSeconds <= 5) {
+    // Show 1s ago, 2s ago, 3s ago, 4s ago, 5s ago
+    return `${totalSeconds}s ago`;
+  } else if (totalSeconds <= 10) {
+    // Show 5s ago until 10s ago
+    return '5s ago';
+  } else if (totalSeconds <= 30) {
+    // Show 10s ago until 30s ago
+    return '10s ago';
+  } else if (totalSeconds < 60) {
+    // Show 30s ago until 1 minute ago
+    return '30s ago';
+  } else if (totalSeconds < 3600) {
+    // Show minutes ago
+    const minutes = Math.floor(totalSeconds / 60);
+    return `${minutes}m ago`;
+  } else {
+    // Show hours ago
+    const hours = Math.floor(totalSeconds / 3600);
+    return `${hours}h ago`;
+  }
+}
+
+// Update only session time and last modified (called by timer)
+function updateSessionAndLastModified() {
+  const sessionTimeElement = document.querySelector('#session-time');
+  const lastModifiedElement = document.querySelector('#last-modified');
+  
+  // Update session time
+  if (sessionTimeElement && sessionStartTime) {
+    const sessionSeconds = Math.floor((Date.now() - sessionStartTime) / 1000);
+    sessionTimeElement.textContent = formatTimeWithSteps(sessionSeconds);
+  }
+  
+  // Update last modified
+  if (lastModifiedElement && lastSaveTime) {
+    const timeSinceSave = Math.floor((Date.now() - lastSaveTime) / 1000);
+    lastModifiedElement.textContent = formatTimeAgoWithSteps(timeSinceSave);
+  }
 }
 
 // Update word count and all metrics
@@ -2170,7 +3041,7 @@ function updateWordCount() {
   
   if (!textarea || !wordCountElement) return;
   
-  const content = textarea.value;
+  const content = textarea.textContent || textarea.innerText || '';
   const words = content.trim() ? content.trim().split(/\s+/).length : 0;
   const characters = content.length;
   
@@ -2179,13 +3050,8 @@ function updateWordCount() {
   
   // Update cursor position
   if (cursorInfoElement) {
-    const cursorPos = textarea.selectionStart;
-    const textBeforeCursor = content.substring(0, cursorPos);
-    const lines = textBeforeCursor.split('\n');
-    const currentLine = lines.length;
-    const currentColumn = lines[lines.length - 1].length + 1;
-    
-    cursorInfoElement.textContent = `Ln ${currentLine}, Col ${currentColumn}`;
+    // For contentEditable, we'll show a simplified cursor info
+    cursorInfoElement.textContent = 'Rich text editor';
   }
   
   // Update WPM
@@ -2199,23 +3065,7 @@ function updateWordCount() {
     readingTimeElement.textContent = `~${readingMinutes} min read`;
   }
   
-  // Update session time
-  if (sessionTimeElement && sessionStartTime) {
-    const sessionMinutes = Math.floor((Date.now() - sessionStartTime) / 60000);
-    sessionTimeElement.textContent = `${sessionMinutes}m`;
-  }
-  
-  // Update last modified
-  if (lastModifiedElement && lastSaveTime) {
-    const timeSinceSave = Math.floor((Date.now() - lastSaveTime) / 1000);
-    if (timeSinceSave < 60) {
-      lastModifiedElement.textContent = `${timeSinceSave}s ago`;
-    } else if (timeSinceSave < 3600) {
-      lastModifiedElement.textContent = `${Math.floor(timeSinceSave / 60)}m ago`;
-    } else {
-      lastModifiedElement.textContent = `${Math.floor(timeSinceSave / 3600)}h ago`;
-    }
-  }
+  // Session time and last modified are now updated by the timer
 }
 
 
@@ -2224,12 +3074,12 @@ function undo() {
   if (currentNoteId && undoStacks[currentNoteId] && undoStacks[currentNoteId].length > 0) {
     const textarea = document.querySelector('#note-editor');
     if (textarea) {
-      const currentState = textarea.value;
+      const currentState = textarea.innerHTML;
       redoStacks[currentNoteId].push(currentState);
       
       const previousState = undoStacks[currentNoteId].pop();
       isUndoRedo = true;
-      textarea.value = previousState;
+      textarea.innerHTML = previousState;
       isUndoRedo = false;
       
       if (notes[currentNoteId]) {
@@ -2247,12 +3097,12 @@ function redo() {
   if (currentNoteId && redoStacks[currentNoteId] && redoStacks[currentNoteId].length > 0) {
     const textarea = document.querySelector('#note-editor');
     if (textarea) {
-      const currentState = textarea.value;
+      const currentState = textarea.innerHTML;
       undoStacks[currentNoteId].push(currentState);
       
       const nextState = redoStacks[currentNoteId].pop();
       isUndoRedo = true;
-      textarea.value = nextState;
+      textarea.innerHTML = nextState;
       isUndoRedo = false;
       
       if (notes[currentNoteId]) {
@@ -2270,7 +3120,7 @@ function saveStateForUndo() {
   if (!isUndoRedo && currentNoteId) {
     const textarea = document.querySelector('#note-editor');
     if (textarea) {
-      const currentValue = textarea.value;
+      const currentValue = textarea.innerHTML;
       undoStacks[currentNoteId].push(currentValue);
       
       if (undoStacks[currentNoteId].length > 50) {
@@ -2284,19 +3134,43 @@ function saveStateForUndo() {
 
 // Toggle visibility
 function toggleVisibility(visible) {
+  console.log('🔄 Toggling sticky note visibility:', visible);
+  
   isVisible = visible;
   const container = document.getElementById('sticky-note-extension');
   if (container) {
     container.style.display = visible ? 'flex' : 'none';
+    console.log('✅ Sticky note visibility updated');
+  } else {
+    console.log('❌ Sticky note container not found!');
   }
   
   // Clean up drag state and previews when hiding
   if (!visible) {
+    console.log('🧹 Cleaning up drag state and previews...');
     cleanupDragState();
     cleanupAllPreviews();
   }
   
-  chrome.storage.sync.set({ noteVisible: visible });
+  // Don't save visibility state here - it's already saved by the background script
+  // This prevents infinite loops between content script and background script
+  console.log('💾 Visibility state already saved by background script:', visible);
+  
+  // Simple visibility toggle - no test elements
+  if (visible && container) {
+    // Remove any test elements that might be interfering
+    const testElement = document.getElementById('sticky-note-test');
+    if (testElement) {
+      testElement.remove();
+    }
+    
+    // Ensure the container is properly visible
+    container.style.display = 'flex';
+    container.style.visibility = 'visible';
+    container.style.opacity = '1';
+    
+    console.log('✅ Sticky note should now be visible');
+  }
 }
 
 // Toggle full-screen mode
@@ -2316,7 +3190,7 @@ function toggleFullScreen() {
     fullScreen: isFullScreen
   });
   
-  chrome.storage.sync.set({ isFullScreen: isFullScreen });
+  safeStorageCall('set', { isFullScreen: isFullScreen });
 }
 
 // Apply full-screen mode (separated for real-time sync)
@@ -2365,7 +3239,7 @@ function applyFullScreen() {
     `;
 
     // Try restoring saved placement after exiting fullscreen
-    chrome.storage.sync.get(['notePosition', 'noteSize'], (result) => {
+    safeStorageCall('get', ['notePosition', 'noteSize'], (result) => {
       const pos = result.notePosition;
       const size = result.noteSize;
       if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
@@ -2398,7 +3272,7 @@ function toggleDarkMode() {
     darkMode: isDarkMode
   });
   
-  chrome.storage.sync.set({ isDarkMode: isDarkMode });
+  safeStorageCall('set', { isDarkMode: isDarkMode });
   console.log('Dark mode toggled:', isDarkMode);
 }
 
@@ -2408,6 +3282,9 @@ function applyDarkMode() {
   if (!container) return;
   
   if (isDarkMode) {
+    // Add dark mode class for CSS styling
+    container.classList.add('dark-mode');
+    
     // Dark mode styles with proper contrast
     container.style.background = '#1e1e1e';
     container.style.borderColor = '#404040';
@@ -2450,6 +3327,21 @@ function applyDarkMode() {
     if (textarea) {
       textarea.style.background = '#1e1e1e';
       textarea.style.color = '#e0e0e0';
+    }
+    
+    // Update markdown toolbar
+    const markdownToolbar = container.querySelector('#markdown-toolbar');
+    if (markdownToolbar) {
+      markdownToolbar.style.background = '#2d2d2d';
+      markdownToolbar.style.borderColor = '#404040';
+    }
+    
+    // Update preview area
+    const previewArea = container.querySelector('#markdown-preview');
+    if (previewArea) {
+      previewArea.style.background = '#1e1e1e';
+      previewArea.style.color = '#e0e0e0';
+      previewArea.style.borderColor = '#404040';
     }
     
     // Update status bar
@@ -2535,6 +3427,9 @@ function applyDarkMode() {
     }
     
   } else {
+    // Remove dark mode class
+    container.classList.remove('dark-mode');
+    
     // Light mode styles
     container.style.background = '#ffffff';
     container.style.borderColor = '#e9ecef';
@@ -2576,6 +3471,21 @@ function applyDarkMode() {
     if (textarea) {
       textarea.style.background = '#ffffff';
       textarea.style.color = '#333333';
+    }
+    
+    // Update markdown toolbar
+    const markdownToolbar = container.querySelector('#markdown-toolbar');
+    if (markdownToolbar) {
+      markdownToolbar.style.background = '#f8f9fa';
+      markdownToolbar.style.borderColor = '#e9ecef';
+    }
+    
+    // Update preview area
+    const previewArea = container.querySelector('#markdown-preview');
+    if (previewArea) {
+      previewArea.style.background = '#ffffff';
+      previewArea.style.color = '#333333';
+      previewArea.style.borderColor = '#e9ecef';
     }
     
     // Update status bar
@@ -2675,8 +3585,7 @@ function performSearch() {
   searchResults = [];
   
   Object.values(notes).forEach(note => {
-    const firstLine = note.content.split('\n')[0].trim();
-    const title = firstLine || 'Untitled Note';
+    const title = note.title || 'Untitled Note';
     const titleMatch = title.toLowerCase().includes(query);
     const contentMatch = note.content.toLowerCase().includes(query);
     
@@ -2884,8 +3793,7 @@ function performFuzzySearch(query) {
   
   Object.values(notes).forEach(note => {
     // Get title from first line of content
-    const firstLine = note.content.split('\n')[0].trim();
-    const title = firstLine || 'Untitled Note';
+    const title = note.title || 'Untitled Note';
     
     const titleMatches = fuzzyMatch(title, queryLower);
     const contentMatches = fuzzyMatch(note.content, queryLower);
@@ -3067,17 +3975,12 @@ function selectSearchResult(match) {
   // Find and highlight the search term in the editor
   const textarea = document.querySelector('#note-editor');
   if (textarea && match.contentMatches.length > 0) {
-    const firstMatchIndex = match.contentMatches[0];
-    const lastMatchIndex = match.contentMatches[match.contentMatches.length - 1];
     textarea.focus();
     
-    // Select the entire matched text (from first to last character)
-    textarea.setSelectionRange(firstMatchIndex, lastMatchIndex + 1);
-    
-    // Scroll to the match
-    textarea.scrollTop = textarea.scrollHeight * (firstMatchIndex / textarea.value.length);
-    
-    console.log(`Selected text from ${firstMatchIndex} to ${lastMatchIndex + 1}: "${textarea.value.substring(firstMatchIndex, lastMatchIndex + 1)}"`);
+    // For contentEditable, we'll just focus the element
+    // The search highlighting would need more complex implementation
+    // to work properly with contentEditable divs
+    console.log(`Found match in content, focused editor`);
   }
   
   console.log('Selected search result:', match.title);
@@ -3126,7 +4029,7 @@ function showNotePreview(noteId, tabElement) {
     margin-bottom: 8px;
     color: ${titleColor};
   `;
-  title.textContent = firstLine || 'Untitled Note';
+  title.textContent = (firstLine && firstLine.length > 0) ? firstLine : 'Untitled Note';
   
   const category = document.createElement('div');
   const categoryColor = isDarkMode ? '#b0b0b0' : '#666';
@@ -3287,7 +4190,7 @@ function makeDraggable(element, handle) {
     if (isDragging && !isFullScreen) {
       isDragging = false;
       const rect = element.getBoundingClientRect();
-      chrome.storage.sync.set({
+      safeStorageCall('set', {
         notePosition: { x: rect.left, y: rect.top }
       });
       // Broadcast new position to other tabs
@@ -3300,7 +4203,7 @@ function makeDraggable(element, handle) {
 
 // Send real-time update to all tabs
 function sendRealtimeUpdate(type, data) {
-  chrome.runtime.sendMessage({
+  safeRuntimeSendMessage({
     type: 'REALTIME_UPDATE',
     updateType: type,
     data: data,
@@ -3310,8 +4213,10 @@ function sendRealtimeUpdate(type, data) {
 
 // Handle messages from background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('📨 Message received:', message.type, message);
   switch (message.type) {
     case 'TOGGLE_VISIBILITY':
+      console.log('🔄 Processing TOGGLE_VISIBILITY message with visible:', message.visible);
       toggleVisibility(message.visible);
       break;
     case 'STORAGE_CHANGED':
@@ -3329,6 +4234,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Handle real-time updates from other tabs
 function handleRealtimeUpdate(updateType, data, timestamp) {
+  // Temporarily disabled to test backwards text issue
+  return;
+  
   // Ignore updates from the same tab (prevent echo)
   if (timestamp && Math.abs(Date.now() - timestamp) < 100) {
     return;
@@ -3340,21 +4248,32 @@ function handleRealtimeUpdate(updateType, data, timestamp) {
         // Update content without triggering input event
         const textarea = document.querySelector('#note-editor');
         if (textarea && currentNoteId === data.noteId) {
-          const currentCursor = textarea.selectionStart;
-          const currentSelectionEnd = textarea.selectionEnd;
+          // Save current cursor position for contentEditable
+          const selection = window.getSelection();
+          const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+          const currentCursor = range ? range.startOffset : 0;
           
           notes[data.noteId].content = data.content;
           notes[data.noteId].updatedAt = new Date().toISOString();
           
           // Only update if content is different to avoid cursor jumping
-          if (textarea.value !== data.content) {
-            textarea.value = data.content;
+          if (textarea.innerHTML !== data.content) {
+            textarea.innerHTML = data.content;
             updateWordCount();
             updateTabs();
             
-            // Restore cursor position if it hasn't moved much
-            if (Math.abs(textarea.selectionStart - currentCursor) < 10) {
-              textarea.setSelectionRange(currentCursor, currentSelectionEnd);
+            // Restore cursor position if possible
+            if (range && textarea.firstChild) {
+              try {
+                const newRange = document.createRange();
+                newRange.setStart(textarea.firstChild, Math.min(currentCursor, textarea.firstChild.textContent.length));
+                newRange.setEnd(textarea.firstChild, Math.min(currentCursor, textarea.firstChild.textContent.length));
+                selection.removeAllRanges();
+                selection.addRange(newRange);
+              } catch (e) {
+                // If cursor restoration fails, just focus the element
+                textarea.focus();
+              }
             }
           }
         } else {
@@ -3503,17 +4422,126 @@ function initializeDragAndDrop() {
   console.log('HTML5 drag and drop functionality initialized');
 }
 
+// Markdown rendering functionality
+function renderMarkdown(text) {
+  // Simple markdown parser for basic features
+  let html = text
+    // Headers
+    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    // Bold
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    // Code blocks
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    // Images
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width: 100%; height: auto;">')
+    // Lists
+    .replace(/^\* (.*$)/gim, '<li>$1</li>')
+    .replace(/^- (.*$)/gim, '<li>$1</li>')
+    .replace(/^\d+\. (.*$)/gim, '<li>$1</li>')
+    // Line breaks
+    .replace(/\n/g, '<br>');
+  
+  // Wrap list items in ul/ol tags
+  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+  
+  return html;
+}
+
+// Image handling functionality
+async function handleImagePaste(event) {
+  const items = event.clipboardData?.items;
+  if (!items) return false;
+  
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.type.indexOf('image') !== -1) {
+      const file = item.getAsFile();
+      if (file) {
+        await insertImageFromFile(file);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function insertImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      insertImageAtCursor(dataUrl);
+      resolve();
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function insertImageAtCursor(dataUrl) {
+  const textarea = document.querySelector('#note-editor');
+  if (!textarea) return;
+  
+  // Create image element
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.alt = 'Image';
+  img.style.maxWidth = '100%';
+  img.style.height = 'auto';
+  img.style.borderRadius = '4px';
+  img.style.margin = '8px 0';
+  
+  // Insert image at cursor position
+  const selection = window.getSelection();
+  if (selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(img);
+    range.setStartAfter(img);
+    range.setEndAfter(img);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } else {
+    textarea.appendChild(img);
+  }
+  
+  // Update note content
+  if (currentNoteId && notes[currentNoteId]) {
+    notes[currentNoteId].content = textarea.innerHTML;
+    notes[currentNoteId].updatedAt = new Date().toISOString();
+    updateWordCount();
+    saveNotes();
+  }
+  
+  textarea.focus();
+}
+
+// Markdown functionality removed - keeping it simple
+
 // Initialize the sticky note app
 function initializeStickyNoteApp() {
-  console.log('Initializing advanced sticky note app...');
+  console.log('🚀 Initializing advanced sticky note app...');
+  console.log('📋 Initial state:', { isVisible, isFullScreen, isDarkMode, currentNoteId });
   
   // Initialize drag and drop functionality
+  console.log('🎯 Initializing drag and drop...');
   initializeDragAndDrop();
   
+  // Markdown features removed - keeping it simple
+  
   // Load notes first to get the correct visibility state
+  console.log('📚 Loading notes...');
   loadNotes();
   
-  console.log('Advanced sticky note app initialized');
+  console.log('✅ Advanced sticky note app initialization complete');
 }
 
 // Start when DOM is ready

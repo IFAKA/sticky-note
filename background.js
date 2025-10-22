@@ -25,44 +25,45 @@ chrome.action.onClicked.addListener((tab) => {
  */
 async function toggleStickyNote() {
   try {
-    console.log('Toggling sticky note...');
+    console.log('🔄 Background: Toggling sticky note...');
     
     // Get current visibility state
     const result = await chrome.storage.sync.get(['noteVisible']);
     const currentVisibility = result.noteVisible ?? true;
     const newVisibility = !currentVisibility;
     
-    console.log(`Current: ${currentVisibility}, New: ${newVisibility}`);
+    console.log(`🔄 Background: Current visibility: ${currentVisibility}, New visibility: ${newVisibility}`);
     
     // Update visibility state
     await chrome.storage.sync.set({ noteVisible: newVisibility });
-    console.log('Visibility state updated');
+    console.log('🔄 Background: Visibility state updated in storage');
     
     // Send message to all tabs
     const tabs = await chrome.tabs.query({});
-    console.log(`Sending message to ${tabs.length} tabs`);
+    console.log(`🔄 Background: Sending message to ${tabs.length} tabs`);
     
     let successCount = 0;
     let errorCount = 0;
     
     for (const tab of tabs) {
       try {
+        console.log(`🔄 Background: Sending TOGGLE_VISIBILITY message to tab ${tab.id} (${tab.url})`);
         await chrome.tabs.sendMessage(tab.id, {
           type: 'TOGGLE_VISIBILITY',
           visible: newVisibility
         });
         successCount++;
-        console.log(`✅ Message sent to tab ${tab.id}`);
+        console.log(`✅ Background: Message sent successfully to tab ${tab.id}`);
       } catch (error) {
         errorCount++;
-        console.log(`❌ Could not send to tab ${tab.id}: ${error.message}`);
+        console.log(`❌ Background: Could not send to tab ${tab.id}: ${error.message}`);
       }
     }
     
-    console.log(`Message sending complete: ${successCount} successful, ${errorCount} failed`);
+    console.log(`🔄 Background: Message sending complete: ${successCount} successful, ${errorCount} failed`);
     
   } catch (error) {
-    console.error('Error toggling sticky note:', error);
+    console.error('❌ Background: Error toggling sticky note:', error);
   }
 }
 
@@ -116,7 +117,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   console.log('Extension installed/updated:', details);
   
   chrome.storage.sync.set({
-    noteVisible: false,
+    noteVisible: false,  // Default to hidden for new users
     noteContent: '',
     notePosition: { x: 100, y: 100 },
     notes: {},
