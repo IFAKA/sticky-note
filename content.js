@@ -34,15 +34,11 @@ let lastSaveTime = null;
 
 // Global drag and drop variables
 let isTabDragging = false;
-let dragStartX = 0;
-let dragStartY = 0;
-let dragThreshold = 3;
-let dragStarted = false;
-let originalTabIndex = -1;
 let dragOverTab = null;
 let dragOverPosition = null;
 let draggedTab = null;
 let dragTooltip = null;
+let dragImageEl = null;
 
 // Note templates for trading and development
 const NOTE_TEMPLATES = {
@@ -323,6 +319,354 @@ const NOTE_TEMPLATES = {
   }
 };
 
+// Advanced specialized templates
+Object.assign(NOTE_TEMPLATES, {
+  'bug-report': {
+    name: 'Bug Report',
+    content: `# Bug Report - {title}
+
+## Summary
+- **Impact**: 
+- **Severity**: 
+- **Frequency**: 
+
+## Environment
+- **App/Service**: 
+- **Version/Commit**: 
+- **OS/Browser**: 
+
+## Steps to Reproduce
+1. 
+2. 
+3. 
+
+## Expected Result
+- 
+
+## Actual Result
+- 
+
+## Logs / Screenshots
+- 
+
+## Workaround
+- 
+
+## Owner
+- **Assignee**: 
+- **Due**: `
+  },
+  'design-doc': {
+    name: 'Design Doc',
+    content: `# Design Doc - {feature}
+
+## Context
+- 
+
+## Goals
+- 
+
+## Non-Goals
+- 
+
+## Requirements
+- Functional: 
+- Non-Functional: 
+
+## Architecture
+- High-level: 
+- Components: 
+- Data Flow: 
+
+## API
+- Endpoints: 
+- Schemas: 
+
+## Risks
+- 
+
+## Alternatives Considered
+- 
+
+## Rollout Plan
+- 
+
+## Appendix
+- `
+  },
+  'incident-postmortem': {
+    name: 'Incident Postmortem',
+    content: `# Incident Postmortem - {incident_id}
+
+## Summary
+- **Start**: 
+- **End**: 
+- **Duration**: 
+- **Severity**: 
+- **Customer Impact**: 
+
+## Timeline
+- T0: Detection - 
+- T1: Triage - 
+- T2: Mitigation - 
+- T3: Resolution - 
+
+## Root Cause
+- 
+
+## Contributing Factors
+- 
+
+## What Went Well
+- 
+
+## What Went Poorly
+- 
+
+## Action Items
+- [ ] Owner:  Due:  Impact: 
+- [ ] Owner:  Due:  Impact: 
+`
+  },
+  'prd': {
+    name: 'Product Requirements (PRD)',
+    content: `# PRD - {feature}
+
+## Overview
+- Problem: 
+- Users: 
+- Success Metrics: 
+
+## User Stories
+- As a , I want , so that .
+- As a , I want , so that .
+
+## Requirements
+- Must: 
+- Should: 
+- Could: 
+
+## UX
+- Flows: 
+- States: 
+
+## Analytics
+- Events: 
+- KPIs: 
+
+## Launch Criteria
+- 
+`
+  },
+  'daily-standup': {
+    name: 'Daily Standup',
+    content: `# Daily Standup - {date}
+
+## Yesterday
+- 
+
+## Today
+- 
+
+## Blockers
+- 
+`
+  },
+  'user-story': {
+    name: 'User Story',
+    content: `# User Story - {title}
+
+## Story
+As a , I want , so that .
+
+## Acceptance Criteria
+- [ ] 
+- [ ] 
+- [ ] 
+
+## Notes
+- 
+`
+  },
+  'test-case': {
+    name: 'Test Case',
+    content: `# Test Case - {id}
+
+## Objective
+- 
+
+## Preconditions
+- 
+
+## Steps
+1. 
+2. 
+3. 
+
+## Expected
+- 
+
+## Actual
+- 
+
+## Status
+- Pass/Fail: 
+`
+  },
+  'rfc': {
+    name: 'RFC',
+    content: `# RFC - {title}
+
+## Summary
+- 
+
+## Motivation
+- 
+
+## Detailed Design
+- 
+
+## Drawbacks
+- 
+
+## Alternatives
+- 
+
+## Adoption Strategy
+- 
+
+## Unresolved Questions
+- 
+`
+  },
+  'research-summary': {
+    name: 'Research Summary',
+    content: `# Research Summary - {topic}
+
+## Objective
+- 
+
+## Methodology
+- 
+
+## Findings
+- 
+
+## Insights
+- 
+
+## Next Steps
+- 
+`
+  },
+  'sql-analysis': {
+    name: 'SQL Analysis',
+    content: `# SQL Analysis - {question}
+
+## Context
+- 
+
+## Query
+SELECT 
+  
+FROM 
+  
+WHERE 
+  ;
+
+## Results Summary
+- Rows: 
+- Key Metrics: 
+
+## Interpretation
+- 
+`
+  },
+  'ds-experiment': {
+    name: 'Data Science Experiment',
+    content: `# DS Experiment - {name}
+
+## Hypothesis
+- 
+
+## Dataset
+- Source: 
+- Size: 
+- Features: 
+
+## Method
+- Model: 
+- Params: 
+- Validation: 
+
+## Results
+- Metrics: 
+- Plots: 
+
+## Conclusions
+- 
+`
+  },
+  'sre-runbook': {
+    name: 'SRE Runbook',
+    content: `# Runbook - {service}
+
+## Symptoms
+- 
+
+## Diagnosis
+1. Check dashboards: 
+2. Check logs: 
+3. Check alerts: 
+
+## Mitigation
+- 
+
+## Escalation
+- Contact: 
+- Pager: 
+
+## Verification
+- 
+`
+  },
+  'retrospective': {
+    name: 'Retro',
+    content: `# Retrospective - {sprint}
+
+## What went well
+- 
+
+## What could be improved
+- 
+
+## Action items
+- [ ] Owner:  Due: 
+- [ ] Owner:  Due: 
+`
+  },
+  'interview-notes': {
+    name: 'Interview Notes',
+    content: `# Interview - {candidate}
+
+## Role
+- 
+
+## Areas Evaluated
+- 
+
+## Highlights
+- 
+
+## Concerns
+- 
+
+## Recommendation
+- 
+`
+  }
+});
+
 // Create the main sticky note application
 function createStickyNoteApp() {
   // Remove existing app
@@ -334,7 +678,23 @@ function createStickyNoteApp() {
   // Create main container
   const container = document.createElement('div');
   container.id = 'sticky-note-extension';
-  container.style.cssText = `
+  container.style.cssText = isFullScreen ? `
+        position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #ffffff;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+        z-index: 1000;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    display: ${isVisible ? 'flex' : 'none'};
+    flex-direction: column;
+    resize: none;
+        overflow: hidden;
+  ` : `
         position: fixed;
     top: 100px;
     right: 20px;
@@ -746,6 +1106,44 @@ function createStickyNoteApp() {
   setupEventListeners(container, textarea);
   makeDraggable(container, dragHandle);
 
+  // Restore saved placement (position and size) if available
+  chrome.storage.sync.get(['notePosition', 'noteSize'], (result) => {
+    if (!isFullScreen) {
+      const pos = result.notePosition;
+      const size = result.noteSize;
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        container.style.left = pos.x + 'px';
+        container.style.top = pos.y + 'px';
+        // Ensure we don't conflict with right positioning
+        container.style.right = 'auto';
+        container.style.position = 'fixed';
+      }
+      if (size && typeof size.width === 'number' && typeof size.height === 'number') {
+        container.style.width = size.width + 'px';
+        container.style.height = size.height + 'px';
+      }
+    }
+  });
+
+  // Observe size changes to persist dimensions (avoid when in full screen)
+  if (window.ResizeObserver) {
+    let resizeSaveTimeout = null;
+    const ro = new ResizeObserver(() => {
+      if (isFullScreen) return;
+      if (resizeSaveTimeout) {
+        clearTimeout(resizeSaveTimeout);
+      }
+      resizeSaveTimeout = setTimeout(() => {
+        const rect = container.getBoundingClientRect();
+        const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
+        chrome.storage.sync.set({ noteSize: size });
+        // Broadcast real-time update to other tabs
+        sendRealtimeUpdate('UI_STATE_CHANGED', { size });
+      }, 150);
+    });
+    ro.observe(container);
+  }
+
   return container;
 }
 
@@ -858,6 +1256,7 @@ function updateTabs() {
       padding: 4px 8px;
       background: ${isActive ? activeBg : inactiveBg};
       color: ${isActive ? activeColor : inactiveColor};
+      border: ${isActive ? 'none' : `1px solid ${isDarkMode ? '#404040' : '#e9ecef'}`};
       border-radius: 2px;
       cursor: pointer;
       font-size: 11px;
@@ -875,80 +1274,26 @@ function updateTabs() {
       const style = document.createElement('style');
       style.id = 'sticky-note-drag-styles';
       style.textContent = `
-        .note-tab.tab-dragging {
-          transform: rotate(3deg) scale(1.05) !important;
-          opacity: 0.3 !important;
-          z-index: 1000 !important;
-          box-shadow: 0 8px 25px rgba(0,0,0,0.4) !important;
-          cursor: grabbing !important;
-          transition: all 0.1s ease-out !important;
-          filter: blur(0.5px) !important;
-        }
-        
-        .note-tab.tab-drag-over {
-          transform: translateX(5px) !important;
-          transition: transform 0.2s ease !important;
-          border-left: 3px solid #007bff !important;
-        }
-        
-        .note-tab.tab-drag-over-left {
-          transform: translateX(-5px) !important;
-          transition: transform 0.2s ease !important;
-          border-right: 3px solid #007bff !important;
-        }
-        
-        .note-tab:active:not(.tab-dragging) {
-          transform: translateY(1px);
-          transition: transform 0.1s ease;
-        }
-        
-        #tab-drop-indicator {
-          animation: dropPulse 1.5s infinite;
-          border-radius: 2px;
-          box-shadow: 0 0 8px rgba(0, 123, 255, 0.6);
-          z-index: 4000;
-        }
-        
-        #tab-drop-indicator::before {
+        .note-tab.tab-drag-over-right::after {
           content: '';
           position: absolute;
-          top: -2px;
-          left: -2px;
-          right: -2px;
-          bottom: -2px;
-          background: linear-gradient(45deg, #007bff, #0056b3);
-          border-radius: 3px;
-          opacity: 0.3;
-          animation: dropGlow 2s infinite;
+          top: 0;
+          right: 0;
+          width: 3px;
+          height: 100%;
+          background: #007bff;
+          pointer-events: none;
         }
         
-        @keyframes dropPulse {
-          0%, 100% { 
-            opacity: 1; 
-            transform: scaleY(1);
-          }
-          50% { 
-            opacity: 0.7; 
-            transform: scaleY(1.2);
-          }
-        }
-        
-        @keyframes dropGlow {
-          0%, 100% { opacity: 0.3; }
-          50% { opacity: 0.6; }
-        }
-        
-        .tab-container-dragging {
-          user-select: none !important;
-        }
-        
-        .tab-container-dragging .note-tab:not(.tab-dragging) {
-          transition: all 0.2s ease !important;
-        }
-        
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
+        .note-tab.tab-drag-over-left::after {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 3px;
+          height: 100%;
+          background: #007bff;
+          pointer-events: none;
         }
       `;
       document.head.appendChild(style);
@@ -1069,20 +1414,154 @@ function updateTabs() {
     
     // Helper functions moved to global scope
     
-    // Simple drag start
-    tab.addEventListener('mousedown', (e) => {
-      if (e.target.classList.contains('close-tab')) return;
+    // HTML5 drag and drop - make tab draggable
+    tab.draggable = true;
+    
+    // Drag start handler
+    tab.addEventListener('dragstart', (e) => {
+      if (e.target.classList.contains('close-tab')) {
+        e.preventDefault();
+        return;
+      }
       
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
-      dragStarted = false;
       draggedTab = tab;
+      isTabDragging = true;
       
-      tab.style.cursor = 'grabbing';
-      tab.style.userSelect = 'none';
-      tab.style.transform = 'translateY(1px)';
+      // Set drag data
+      e.dataTransfer.setData('text/plain', note.id);
+      e.dataTransfer.effectAllowed = 'move';
       
+      // Create a custom drag image cloned from the tab to match its UI
+      const computed = window.getComputedStyle(tab);
+      dragImageEl = tab.cloneNode(true);
+      // Ensure the drag image visually matches the tab and is rendered offscreen
+      dragImageEl.classList.remove('tab-drag-over-left', 'tab-drag-over-right');
+      dragImageEl.style.position = 'fixed';
+      dragImageEl.style.top = '0px';
+      dragImageEl.style.left = '-10000px'; // keep offscreen but rendered
+      dragImageEl.style.zIndex = '9999';
+      dragImageEl.style.pointerEvents = 'none';
+      dragImageEl.style.opacity = '1';
+      // Fix size to avoid reflow differences
+      dragImageEl.style.width = computed.width;
+      dragImageEl.style.height = computed.height;
+      // Make sure long titles behave like the tab
+      dragImageEl.style.whiteSpace = 'nowrap';
+      dragImageEl.style.textOverflow = 'ellipsis';
+      dragImageEl.style.overflow = 'hidden';
+      // Simple border for visibility, no animation
+      dragImageEl.style.boxShadow = 'none';
+      document.body.appendChild(dragImageEl);
+      
+      // Offset so the drag image sits directly below the cursor (top edge under pointer)
+      const offsetX = 10; // slight right shift so cursor doesn't cover text
+      const offsetY = 0;  // top edge of image aligned to cursor
+      try {
+        e.dataTransfer.setDragImage(dragImageEl, offsetX, offsetY);
+      } catch (_) {
+        // Some environments may restrict setDragImage; ignore gracefully
+      }
+      
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'grabbing';
+    });
+    
+    // Drag end handler
+    tab.addEventListener('dragend', (e) => {
+      isTabDragging = false;
+      
+      // Clean up custom drag image
+      if (dragImageEl) {
+        dragImageEl.remove();
+        dragImageEl = null;
+      }
+      
+      // Reset visual state (no animations)
+      tab.style.opacity = '1';
+      tab.style.cursor = 'pointer';
+      tab.style.userSelect = 'auto';
+      tab.style.transform = '';
+      
+      // Ensure any legacy tooltip is removed
+      removeDragTooltip();
+      
+      // Reset body styles
+      document.body.style.userSelect = 'auto';
+      document.body.style.cursor = 'auto';
+      
+      // Clean up hover effects
+      if (dragOverTab) {
+        dragOverTab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
+        dragOverTab = null;
+        dragOverPosition = null;
+      }
+      
+      draggedTab = null;
+    });
+    
+    // Drop zone handlers for each tab
+    tab.addEventListener('dragover', (e) => {
       e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      
+      if (tab !== draggedTab) {
+        const position = getDropPosition(tab, e.clientX);
+        
+        // Update indicator if we're on a different tab OR if position changed on same tab
+        if (dragOverTab !== tab || dragOverPosition !== position) {
+          // Clean up previous tab
+          if (dragOverTab && dragOverTab !== tab) {
+            dragOverTab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
+          }
+          
+          // Clean up current tab if position changed
+          if (dragOverTab === tab) {
+            tab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
+          }
+          
+          dragOverTab = tab;
+          dragOverPosition = position;
+          
+          if (position === 'before') {
+            tab.classList.add('tab-drag-over-left');
+          } else {
+            tab.classList.add('tab-drag-over-right');
+          }
+        }
+      }
+    });
+    
+    tab.addEventListener('dragleave', (e) => {
+      // Only remove classes if we're actually leaving the tab
+      if (!tab.contains(e.relatedTarget)) {
+        tab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
+        if (dragOverTab === tab) {
+          dragOverTab = null;
+          dragOverPosition = null;
+        }
+      }
+    });
+    
+    tab.addEventListener('drop', (e) => {
+      e.preventDefault();
+      
+      const draggedNoteId = e.dataTransfer.getData('text/plain');
+      const targetNoteId = tab.dataset.noteId;
+      const position = getDropPosition(tab, e.clientX);
+      
+      console.log('Drop event:', { draggedNoteId, targetNoteId, position });
+      
+      if (targetNoteId && draggedNoteId && targetNoteId !== draggedNoteId) {
+        console.log('Reordering tabs:', { draggedNoteId, targetNoteId, position });
+        reorderTabs(draggedNoteId, targetNoteId, position);
+      }
+      
+      // Clean up visual feedback
+      tab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
+      if (dragOverTab === tab) {
+        dragOverTab = null;
+        dragOverPosition = null;
+      }
     });
     
     
@@ -1102,28 +1581,53 @@ function updateTabs() {
 
 // Simple tab reordering - move one note to a new position
 function reorderTabs(draggedNoteId, targetNoteId, position = 'before') {
-  if (!notes[draggedNoteId] || !notes[targetNoteId]) return;
+  console.log('reorderTabs called:', { draggedNoteId, targetNoteId, position });
+  
+  if (!notes[draggedNoteId] || !notes[targetNoteId]) {
+    console.log('Missing notes:', { draggedNoteId: !!notes[draggedNoteId], targetNoteId: !!notes[targetNoteId] });
+    return;
+  }
   
   // Get all notes as array
   const noteArray = Object.values(notes);
   const draggedIndex = noteArray.findIndex(note => note.id === draggedNoteId);
   const targetIndex = noteArray.findIndex(note => note.id === targetNoteId);
   
-  if (draggedIndex === -1 || targetIndex === -1) return;
+  console.log('Indices:', { draggedIndex, targetIndex });
+  
+  if (draggedIndex === -1 || targetIndex === -1) {
+    console.log('Invalid indices');
+    return;
+  }
+  
+  // If dragging to the same position, do nothing
+  if (draggedIndex === targetIndex) {
+    console.log('Same position, no change needed');
+    return;
+  }
   
   // Remove dragged note
   const [draggedNote] = noteArray.splice(draggedIndex, 1);
   
-  // Calculate new position
+  // Calculate new position after removal
   let newIndex = targetIndex;
-  if (position === 'after') {
-    newIndex = targetIndex + (targetIndex > draggedIndex ? 0 : 1);
-  } else {
-    newIndex = targetIndex - (targetIndex > draggedIndex ? 1 : 0);
+  
+  // Adjust target index if the dragged item was before the target
+  if (draggedIndex < targetIndex) {
+    newIndex = targetIndex - 1;
   }
+  
+  // Apply position offset
+  if (position === 'after') {
+    newIndex += 1;
+  }
+  
+  console.log('Calculated newIndex:', newIndex);
   
   // Insert at new position
   noteArray.splice(newIndex, 0, draggedNote);
+  
+  console.log('New order:', noteArray.map(note => note.id));
   
   // Update notes object
   notes = {};
@@ -1421,6 +1925,8 @@ function showTemplateMenu(button) {
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     z-index: 1000;
     min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
   `;
   
   Object.entries(NOTE_TEMPLATES).forEach(([key, template]) => {
@@ -1631,7 +2137,8 @@ function loadNotes() {
     updateEditor();
     
     if (isFullScreen) {
-      toggleFullScreen();
+      // Ensure fullscreen applied immediately after app creation
+      applyFullScreen();
     } else {
       // Ensure drag handle cursor is set correctly even when not in full screen
       const container = document.getElementById('sticky-note-extension');
@@ -1644,7 +2151,7 @@ function loadNotes() {
     }
     
     if (isDarkMode) {
-      toggleDarkMode();
+      applyDarkMode();
     }
     
     console.log('Loaded notes:', Object.keys(notes).length);
@@ -1856,6 +2363,21 @@ function applyFullScreen() {
       resize: both;
       overflow: hidden;
     `;
+
+    // Try restoring saved placement after exiting fullscreen
+    chrome.storage.sync.get(['notePosition', 'noteSize'], (result) => {
+      const pos = result.notePosition;
+      const size = result.noteSize;
+      if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        container.style.left = pos.x + 'px';
+        container.style.top = pos.y + 'px';
+        container.style.right = 'auto';
+      }
+      if (size && typeof size.width === 'number' && typeof size.height === 'number') {
+        container.style.width = size.width + 'px';
+        container.style.height = size.height + 'px';
+      }
+    });
   }
   
   // Update drag handle cursor and visibility based on full screen state
@@ -1970,8 +2492,8 @@ function applyDarkMode() {
       
     }
     
-    // Update all buttons for better contrast
-    const buttons = container.querySelectorAll('button');
+    // Update all buttons for better contrast (exclude tab close buttons to preserve inheritance)
+    const buttons = container.querySelectorAll('button:not(.close-tab)');
     buttons.forEach(button => {
       button.style.background = '#404040';
       button.style.borderColor = '#555555';
@@ -1992,9 +2514,17 @@ function applyDarkMode() {
       if (tab.dataset.noteId === currentNoteId) {
         tab.style.background = '#0066cc';
         tab.style.color = '#ffffff';
+        tab.style.border = 'none';
       } else {
         tab.style.background = 'transparent';
         tab.style.color = '#b0b0b0';
+        tab.style.border = '1px solid #404040';
+      }
+
+      // Ensure close button inherits tab color
+      const closeBtn = tab.querySelector('.close-tab');
+      if (closeBtn) {
+        closeBtn.style.color = 'inherit';
       }
     });
     
@@ -2088,8 +2618,8 @@ function applyDarkMode() {
       
     }
     
-    // Reset all buttons
-    const buttons = container.querySelectorAll('button');
+    // Reset all buttons (exclude tab close buttons to preserve inheritance)
+    const buttons = container.querySelectorAll('button:not(.close-tab)');
     buttons.forEach(button => {
       button.style.background = 'transparent';
       button.style.borderColor = '#e9ecef';
@@ -2110,9 +2640,17 @@ function applyDarkMode() {
       if (tab.dataset.noteId === currentNoteId) {
         tab.style.background = '#007bff';
         tab.style.color = '#ffffff';
+        tab.style.border = 'none';
       } else {
         tab.style.background = 'transparent';
         tab.style.color = '#666666';
+        tab.style.border = '1px solid #e9ecef';
+      }
+
+      // Ensure close button inherits tab color
+      const closeBtn = tab.querySelector('.close-tab');
+      if (closeBtn) {
+        closeBtn.style.color = 'inherit';
       }
     });
     
@@ -2752,6 +3290,10 @@ function makeDraggable(element, handle) {
       chrome.storage.sync.set({
         notePosition: { x: rect.left, y: rect.top }
       });
+      // Broadcast new position to other tabs
+      sendRealtimeUpdate('UI_STATE_CHANGED', {
+        position: { x: Math.round(rect.left), y: Math.round(rect.top) }
+      });
     }
   });
 }
@@ -2838,22 +3380,25 @@ function handleRealtimeUpdate(updateType, data, timestamp) {
         isFullScreen = data.fullScreen;
         applyFullScreen();
       }
+      // Apply remote placement updates (position/size)
+      if (!isFullScreen) {
+        const container = document.getElementById('sticky-note-extension');
+        if (container) {
+          if (data.position && typeof data.position.x === 'number' && typeof data.position.y === 'number') {
+            container.style.left = data.position.x + 'px';
+            container.style.top = data.position.y + 'px';
+            container.style.right = 'auto';
+          }
+          if (data.size && typeof data.size.width === 'number' && typeof data.size.height === 'number') {
+            container.style.width = data.size.width + 'px';
+            container.style.height = data.size.height + 'px';
+          }
+        }
+      }
       break;
   }
 }
 
-// Simple function to find tab under mouse
-function getTabAtPosition(x, y) {
-  const tabs = document.querySelectorAll('.note-tab');
-  
-  for (let tab of tabs) {
-    const rect = tab.getBoundingClientRect();
-    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-      return tab;
-    }
-  }
-  return null;
-}
 
 function getDropPosition(targetTab, x) {
   const rect = targetTab.getBoundingClientRect();
@@ -2873,18 +3418,22 @@ function createDragTooltip(noteName) {
     position: fixed !important;
     pointer-events: none;
     z-index: 5000 !important;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 123, 255, 0.9);
     color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
     white-space: nowrap;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(4px);
-    transform: translate(-50%, 0%);
-    margin-top: 8px;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(8px);
+    transform: translate(-50%, -100%);
+    margin-top: -8px;
+    transition: all 0.1s ease;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   `;
   document.body.appendChild(dragTooltip);
   return dragTooltip;
@@ -2902,10 +3451,6 @@ function removeDragTooltip() {
 function cleanupDragState() {
   // Reset all drag variables
   isTabDragging = false;
-  dragStartX = 0;
-  dragStartY = 0;
-  dragStarted = false;
-  originalTabIndex = -1;
   draggedTab = null;
   dragOverTab = null;
   dragOverPosition = null;
@@ -2926,7 +3471,7 @@ function cleanupDragState() {
   // Clean up any tab hover effects
   const tabs = document.querySelectorAll('.note-tab');
   tabs.forEach(tab => {
-    tab.classList.remove('tab-dragging', 'tab-drag-over', 'tab-drag-over-left');
+    tab.classList.remove('tab-drag-over-right', 'tab-drag-over-left');
     tab.style.opacity = '';
     tab.style.cursor = '';
     tab.style.userSelect = '';
@@ -2934,142 +3479,28 @@ function cleanupDragState() {
   });
 }
 
-// Simple drag and drop initialization
+// HTML5 drag and drop initialization
 function initializeDragAndDrop() {
   if (document.documentElement.hasAttribute('data-drag-handler-added')) return;
   
   cleanupDragState();
   
-  // Simple mouse move handler
-  document.addEventListener('mousemove', (e) => {
-    if (dragStartX === 0 || !draggedTab) return;
-    
-    const deltaX = Math.abs(e.clientX - dragStartX);
-    const deltaY = Math.abs(e.clientY - dragStartY);
-    
-    // Start drag if moved beyond threshold
-    if (!dragStarted && (deltaX > dragThreshold || deltaY > dragThreshold)) {
-      isTabDragging = true;
-      dragStarted = true;
-      
-      draggedTab.classList.add('tab-dragging');
-      draggedTab.style.opacity = '0.5';
-      
-      const noteName = draggedTab.querySelector('.note-title')?.textContent || 'Note';
-      const tooltip = createDragTooltip(noteName);
-      tooltip.style.left = (e.clientX + 10) + 'px';
-      tooltip.style.top = (e.clientY + 10) + 'px';
-      
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'grabbing';
-    }
-    
-    if (isTabDragging) {
+  // Add drop zone to the tab container
+  const tabContainer = document.querySelector('#note-tabs');
+  if (tabContainer) {
+    tabContainer.addEventListener('dragover', (e) => {
       e.preventDefault();
-      
-      // Update tooltip position
-      if (dragTooltip) {
-        dragTooltip.style.left = (e.clientX + 10) + 'px';
-        dragTooltip.style.top = (e.clientY + 10) + 'px';
-      }
-      
-      // Handle horizontal scrolling during drag
-      const tabContainer = document.querySelector('#note-tabs');
-      if (tabContainer) {
-        const containerRect = tabContainer.getBoundingClientRect();
-        const scrollThreshold = 50; // Distance from edge to trigger scroll
-        const scrollSpeed = 10; // Pixels to scroll per frame
-        
-        // Check if mouse is near the left edge
-        if (e.clientX < containerRect.left + scrollThreshold) {
-          tabContainer.scrollLeft = Math.max(0, tabContainer.scrollLeft - scrollSpeed);
-        }
-        // Check if mouse is near the right edge
-        else if (e.clientX > containerRect.right - scrollThreshold) {
-          tabContainer.scrollLeft = Math.min(
-            tabContainer.scrollWidth - tabContainer.clientWidth,
-            tabContainer.scrollLeft + scrollSpeed
-          );
-        }
-      }
-      
-      // Find target tab and add visual feedback
-      const targetTab = getTabAtPosition(e.clientX, e.clientY);
-      
-      if (targetTab && targetTab !== draggedTab) {
-        const position = getDropPosition(targetTab, e.clientX);
-        
-        if (dragOverTab !== targetTab) {
-          if (dragOverTab) {
-            dragOverTab.classList.remove('tab-drag-over', 'tab-drag-over-left');
-          }
-          
-          dragOverTab = targetTab;
-          dragOverPosition = position;
-          
-          if (position === 'before') {
-            targetTab.classList.add('tab-drag-over-left');
-          } else {
-            targetTab.classList.add('tab-drag-over');
-          }
-        }
-      } else {
-        if (dragOverTab) {
-          dragOverTab.classList.remove('tab-drag-over', 'tab-drag-over-left');
-          dragOverTab = null;
-          dragOverPosition = null;
-        }
-      }
-    }
-  });
-  
-  // Simple mouse up handler
-  document.addEventListener('mouseup', (e) => {
-    if (isTabDragging && draggedTab) {
-      isTabDragging = false;
-      dragStarted = false;
-      
-      // Reset visual state
-      draggedTab.classList.remove('tab-dragging');
-      draggedTab.style.opacity = '1';
-      draggedTab.style.cursor = 'pointer';
-      draggedTab.style.userSelect = 'auto';
-      draggedTab.style.transform = '';
-      
-      // Remove tooltip
-      removeDragTooltip();
-      
-      // Reset body styles
-      document.body.style.userSelect = 'auto';
-      document.body.style.cursor = 'auto';
-      
-      // Clean up hover effects
-      if (dragOverTab) {
-        dragOverTab.classList.remove('tab-drag-over', 'tab-drag-over-left');
-        dragOverTab = null;
-        dragOverPosition = null;
-      }
-      
-      // Check for drop target and reorder
-      const targetTab = getTabAtPosition(e.clientX, e.clientY);
-      if (targetTab && targetTab !== draggedTab) {
-        const targetNoteId = targetTab.dataset.noteId;
-        const position = getDropPosition(targetTab, e.clientX);
-        
-        if (targetNoteId && targetNoteId !== draggedTab.dataset.noteId) {
-          reorderTabs(draggedTab.dataset.noteId, targetNoteId, position);
-        }
-      }
-      
-      // Reset drag state
-      dragStartX = 0;
-      dragStartY = 0;
-      draggedTab = null;
-    }
-  });
+      e.dataTransfer.dropEffect = 'move';
+    });
+    
+    tabContainer.addEventListener('drop', (e) => {
+      e.preventDefault();
+      // Handle drop on empty space if needed
+    });
+  }
   
   document.documentElement.setAttribute('data-drag-handler-added', 'true');
-  console.log('Drag and drop functionality initialized');
+  console.log('HTML5 drag and drop functionality initialized');
 }
 
 // Initialize the sticky note app
